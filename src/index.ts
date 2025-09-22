@@ -1,4 +1,4 @@
-import express from "express";
+import express, { json } from "express";
 import WebSocket, { WebSocketServer } from "ws";
 import jwt from "jsonwebtoken";
 import { RedisManager } from "./RedisManager";
@@ -6,7 +6,8 @@ import { ServerManager } from "./ServerManager";
 
 type MessageType =
   | { type: "Auth"; token: string }
-  | { type: "Direct"; fromId: string; toId: string; text: string };
+  | { type: "Direct"; fromId: string; toId: string; text: string }
+  | {type :"Group";fromId:string,groupId:string,text:string;members:string[]}
 
 interface JwtPayload {
   userid: string;
@@ -44,7 +45,13 @@ const userSocketMap = new Map<string, WebSocket>();
       const data = JSON.parse(message);
       const recipient = userSocketMap.get(data.toId);
       if (recipient) {
-        recipient.send(JSON.stringify({ fromId: data.fromId, text: data.text }));
+        if(data.type === "Group"){
+          console.log("group reached after redis");
+          recipient.send(JSON.stringify({type:"Group",groupId:data.groupId,fromId: data.fromId, text: data.text}))
+        }
+        else if(data.type === "Direct"){
+          recipient.send(JSON.stringify({ type:"Direct",fromId: data.fromId, text: data.text }));
+        }
       }
     } catch (err) {
       console.error("Error handling routed message:", err);
@@ -107,13 +114,32 @@ wss.on("connection", (socket) => {
         }
 
       } 
+      else if(message.type == 'Group'){
+        const senderId = message.fromId;
+        console.log("inside group if");
+        try{
+            await Promise.all(message.members.map(async (toId)=>{
+               const serverId = await RedisManager.client.hGet("UserServerMap",toId);
+               if(serverId){
+                 await RedisManager.redisPub.publish(
+                  `route_${serverId}`,
+                  JSON.stringify({ type: "Group", groupId: message.groupId, toId, fromId: message.fromId, text: message.text })
+                 )
+               }
+            }))
+        }
+        catch(err){
+          console.log(err);
+        }
+      }
       else if (message.type === "Direct") {
         try {
           console.log("direct message received");
           const localRecipientSocket = userSocketMap.get(message.toId);
 
           if (localRecipientSocket) {
-            localRecipientSocket.send(JSON.stringify({ 
+            localRecipientSocket.send(JSON.stringify({
+              type:"Direct", 
               fromId: message.fromId, 
               text: message.text 
             }));
@@ -125,6 +151,7 @@ wss.on("connection", (socket) => {
             await RedisManager.redisPub.publish(
               `route_${recipientServer}`,
               JSON.stringify({ 
+                type:message.type,
                 fromId: message.fromId, 
                 toId: message.toId, 
                 text: message.text 
