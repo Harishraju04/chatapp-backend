@@ -3,7 +3,8 @@ import WebSocket, { WebSocketServer } from "ws";
 import jwt from "jsonwebtoken";
 import { RedisManager } from "./RedisManager";
 import { ServerManager } from "./ServerManager";
-
+import dotenv from 'dotenv';
+dotenv.config();
 type MessageType =
   | { type: "Auth"; token: string }
   | { type: "Direct"; fromId: string; toId: string; text: string }
